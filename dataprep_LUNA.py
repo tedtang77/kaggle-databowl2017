@@ -7,6 +7,7 @@ import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+
 from skimage import morphology
 from skimage import measure
 from sklearn.cluster import KMeans
