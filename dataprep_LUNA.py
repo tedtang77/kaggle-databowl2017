@@ -7,17 +7,21 @@ import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+import scipy
 
 from skimage import morphology
 from skimage import measure
 from sklearn.cluster import KMeans
 from skimage.transform import resize
 
+import scipy.ndimage
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
 def make_mask(center, diam, z, width, height, spacing, origin):
     '''
-        the mask coordinates have to match the ordering of the array coordinates. The ```x``` and ```y``` ordering is flipped
+        the mask coordinates have to match the ordering of the array coordinates. 
+        The x and y ordering is flipped (in (y, x) ordering)
         Args:
             Center : centers of circles px -- list of coordinates x,y,z
             diam : diameters of circles px -- diameter
@@ -52,6 +56,34 @@ def make_mask(center, diam, z, width, height, spacing, origin):
             if np.linalg.norm(center-np.array([p_x,p_y,z]))<=diam:
                 mask[int((p_y-origin[1])/spacing[1]),int((p_x-origin[0])/spacing[0])] = 1.0
     return(mask)
+
+
+def resample(image, spacing, new_spacing=[1,1,1]):
+    '''
+        resampling the full dataset to a certain isotropic resolution, 1mm*1mm*1mm pixels. So we can use 3D convnets without worrying about learning zoom/slice thickness invariance.
+        
+        A scan may have a pixel spacing of [2.5, 0.5, 0.5], which means that the distance between slices is 2.5 millimeters. For a different scan this may be [1.5, 0.725, 0.725], this can be problematic for automatic analysis (e.g. using ConvNets)! 
+        
+        Note: When you apply this, to save the new spacing! Due to rounding this may be slightly off from the desired spacing (above script picks the best possible spacing with rounding).
+        
+        More Details: https://www.kaggle.com/gzuidhof/full-preprocessing-tutorial
+        
+        Args:
+            image- indexes are z,y,x (notice the ordering)
+            spacing- indexes are z,y,x (notice the ordering)
+            new_spacing- indexes are z,y,x (notice the ordering)
+    '''
+    
+    resize_factor = spacing / new_spacing
+    new_real_shape = image.shape * resize_factor
+    new_shape = np.round(new_real_shape)
+    real_resize_factor = new_shape / image.shape
+    new_spacing = spacing / real_resize_factor
+    
+    image = scipy.ndimage.interpolation.zoom(image, real_resize_factor, mode='nearest')
+    
+    return image, new_spacing
+
 
 def matrix2int16(image):
     ''' 
