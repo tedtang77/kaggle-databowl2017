@@ -17,7 +17,17 @@ from skimage.transform import resize
 import scipy.ndimage
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-def get_images_and_masks(fcount, img_file, mini_df, path): 
+
+def get_filename(case, file_list):
+    '''
+        Helper function to get rows in data frame associated with each file
+    '''
+    for f in file_list:
+        if case in f:
+            return(f)
+        
+
+def get_images_and_masks(fcount, img_file, mini_df, path, resampling=True): 
     # load the data once
     itk_img = sitk.ReadImage(img_file) 
     img_array = sitk.GetArrayFromImage(itk_img) # indexes are z,y,x (notice the ordering)
@@ -25,10 +35,11 @@ def get_images_and_masks(fcount, img_file, mini_df, path):
     origin = np.array(itk_img.GetOrigin())      # x,y,z  Origin in world coordinates (mm)
     spacing = np.array(itk_img.GetSpacing())    # x,y,z  Spacing of voxels in world coor. (mm)
     
-    # Set outside-of-scan pixels to 0
-    # The intercept is usually -1024, so air is approximately 0
-    # More Details: https://www.kaggle.com/gzuidhof/full-preprocessing-tutorial
-    #img_array[img_array == -2000] = 0
+    # For Resampling
+    if resampling is True:
+        img_array, spacing = resample(img_array, spacing[::-1]) # [::-1] turn (x,y,z) spacing into (z,y,x) 
+        spacing = spacing[::-1] # [::-1] turn (z,y,x) spacing back into (x,y,z) 
+        num_z, height, width = img_array.shape
         
     for node_idx, cur_row in mini_df.iterrows():       
         node_x = cur_row["coordX"]
@@ -60,11 +71,6 @@ def get_images_and_masks_resample(fcount, img_file, mini_df, path):
     num_z, height, width = img_array.shape      # heightXwidth constitute the transverse plane
     origin = np.array(itk_img.GetOrigin())      # x,y,z  Origin in world coordinates (mm)
     spacing = np.array(itk_img.GetSpacing())    # x,y,z  Spacing of voxels in world coor. (mm)
-    
-    # Set outside-of-scan pixels to 0
-    # The intercept is usually -1024, so air is approximately 0
-    # More Details: https://www.kaggle.com/gzuidhof/full-preprocessing-tutorial
-    #img_array[img_array == -2000] = 0
     
     # For Resampling  
     img_array_resampled, new_spacing = resample(img_array, spacing[::-1]) # [::-1] turn (x,y,z) spacing into (z,y,x) 
@@ -175,6 +181,30 @@ def matrix2uint16(matrix):
     return(np.array(np.rint( (matrix-m_min)/float(m_max-m_min) * 65535.0),dtype=np.uint16))
 
 
+def get_images_and_masks_by_nodule_position(subset_path, output_path, annotation_fname, resampling=True):
+    '''
+        Args:
+            subset_path: the path which saves lung data subset path
+            output_path: the path to output nodule images and mask files
+            annotation_fname: the path to save nodule_position annotation.csv            
+           
+    '''
+    file_list=glob(subset_path+"*.mhd")
+    print('total .mhd file:', len(file_list))
+    
+    # The locations of the nodes
+    df_node = pd.read_csv(annotation_fname)
+    df_node["file"] = df_node["seriesuid"].apply(get_filename, args=(file_list,))
+    df_node = df_node.dropna()
+    
+    for fcount, img_file in enumerate(file_list):
+        print("Getting mask for image file %s" % img_file.rsplit('/', 1)[-1].rsplit('\\', 1)[-1])
+        
+        mini_df = df_node[df_node["file"]==img_file] #get all nodules associate with file
+        if len(mini_df)>0:       # some files may not have a nodule--skipping those 
+            get_images_and_masks(fcount, img_file, mini_df, output_path, resampling)
+        
+
 def largest_label_volume(im, bg=-1):
     vals, counts = np.unique(im, return_counts=True)
 
@@ -221,6 +251,8 @@ def segment_lung_mask(image, fill_lung_structures=True):
     '''
         Lung segmentation
         It involves quite a few smart steps. It consists of a series of applications of region growing and morphological operations. In this case, we will use only connected component analysis.
+        
+        I then use some erosion and dilation to fill in the incursions into the lungs region by radio-opaque tissue, followed by a selection of the regions based on the bounding box sizes of each region. The initial set of regions looks like 
 
         The steps:  
             * Threshold the image (-320 HU is a good threshold, but it doesn't matter much for this approach)
@@ -293,6 +325,27 @@ def segment_lung_mask(image, fill_lung_structures=True):
     return dilation_binary_image # binary_image
 
 
+def get_segment_lung_mask(path, fill_lung_structures=True):
+    '''
+        Isolation of the Lung Region of Interest to Narrow Our Nodule Search
+
+        To isolate the lungs in the images. The general strategy is to threshold the image to isolate the 
+        regions within the image, and then to identify which of those regions are the lungs. The lungs have a high constrast with the surrounding tissue, so the thresholding is fairly straightforward. We use some ad-hoc criteria for eliminating the non-lung regions from the image which do not apply equally to all data sets. 
+    '''
+    
+    file_list=glob(path+"images*.npy")
+    print('total images:', len(file_list))
+    
+    for img_file in file_list:
+        imgs = np.load(img_file)
+        print("on image", img_file)
+        
+        segmented_lungs_fill = segment_lung_mask(imgs, fill_lung_structures)
+        
+        np.save(img_file.replace("images","lungmask"), segmented_lungs_fill)
+
+
+
 def plot_3d(image, threshold=-300):
     '''
         3D plotting the scan.
@@ -352,3 +405,72 @@ def normalize(image):
     image[image>1] = 1.
     image[image<0] = 0.
     return image
+
+
+def crop_lung_images_and_mask(path, new_size=[512, 512]):
+    '''
+        Args:
+            path: the path which saves "lungmask*" files
+            new_size: array. 
+        Returns:
+            out_images: list. final set of images 
+            out_nodemasks: list. final set of nodemasks 
+    '''
+    file_list=glob(path+"lungmask*.npy");
+    print('total lungmask:', len(file_list))
+    
+    out_images = []      #final set of images
+    out_nodemasks = []   #final set of nodemasks
+    for fname in file_list:
+        print("working on file ", fname)
+        imgs_to_process = np.load(fname.replace("lungmask","images"))
+        masks = np.load(fname)
+        node_masks = np.load(fname.replace("lungmask","masks"))
+        for i in range(len(imgs_to_process)):
+            mask = masks[i]
+            node_mask = node_masks[i]
+            img = imgs_to_process[i]
+            img_height, img_width = img.shape
+            img= mask*img          # apply lung mask
+
+            #make image bounding box  (min row, min col, max row, max col)
+            labels = measure.label(mask)
+            regions = measure.regionprops(labels)
+            #
+            # Finding the global min and max row over all regions
+            #
+            min_row = img_height # 512
+            max_row = 0
+            min_col = img_width # 512
+            max_col = 0
+            for prop in regions:
+                B = prop.bbox
+                if min_row > B[0]:
+                    min_row = B[0]
+                if min_col > B[1]:
+                    min_col = B[1]
+                if max_row < B[2]:
+                    max_row = B[2]
+                if max_col < B[3]:
+                    max_col = B[3]
+            width = max_col-min_col
+            height = max_row - min_row
+            if width > height:
+                max_row=min_row+width
+            else:
+                max_col = min_col+height
+            # 
+            # cropping the image down to the bounding box for all regions
+            # (there's probably an skimage command that can do this in one line)
+            # 
+            img = img[min_row:max_row,min_col:max_col]
+            mask =  mask[min_row:max_row,min_col:max_col]
+            if max_row-min_row <5 or max_col-min_col<5:  # skipping all images with no god regions
+                pass
+            else:
+                new_img = resize(img, new_size, preserve_range=True, mode='constant')
+                new_node_mask = resize(node_mask[min_row:max_row,min_col:max_col], new_size, preserve_range=True, mode='constant')
+                out_images.append(new_img)
+                out_nodemasks.append(new_node_mask)
+                
+    return out_images, out_nodemasks          
