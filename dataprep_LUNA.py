@@ -13,6 +13,7 @@ from skimage import morphology
 from skimage import measure
 from sklearn.cluster import KMeans
 from skimage.transform import resize
+from skimage.segmentation import clear_border
 
 import scipy.ndimage
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -265,31 +266,59 @@ def segment_lung_mask(image, fill_lung_structures=True):
         More Details: https://www.kaggle.com/gzuidhof/full-preprocessing-tutorial
     '''
     
-    threshold = find_threshold(image) # -320 
+    # Convert into a binary image by threshold
+    threshold = find_threshold(image) # -400 # -320 
     threshold_image = np.array(image > threshold, dtype=np.int8)
+    
+    # Remove the blobs connected to the border of the image.
+    #binary_image = clear_border(threshold_image)
+    
+    #binary_image = measure.label(binary_image)
     #
     # I found an initial erosion helful for removing graininess from some of the regions
     # and then large dialation is used to make the lung region 
     # engulf the vessels and incursions into the lung cavity by 
     # radio opaque tissue
     #
-    eroded_image = morphology.binary_erosion(threshold_image) # erosion(threshold_image,np.ones([4,4]))
-    dilation_image = morphology.binary_dilation(eroded_image) # dilation(eroded_image,np.ones([10,10]))
+    #eroded_image = morphology.binary_erosion(threshold_image, np.ones([3,4,4])) # erosion(threshold_image,np.ones([4,4]))
+    #dilation_image = morphology.binary_dilation(eroded_image, np.ones([3,10,10])) # dilation(eroded_image,np.ones([10,10]))
+    dilation_image = morphology.binary_opening(threshold_image)
+    #dilation_image = threshold_image
     
     # not actually binary, but 1 and 2. 
     # 0 is treated as background, which we do not want
     binary_image = dilation_image+1 # np.array(image > -320, dtype=np.int8)+1
     labels = measure.label(binary_image)
+    # Remove the blobs connected to the border of the image.
+    #binary_image = clear_border(labels)
     
     # Pick the pixel in the very corner to determine which label is air.
     #   Improvement: Pick multiple background labels from around the patient
     #   More resistant to "trays" on which the patient lays cutting the air 
     #   around the person in half
-    background_label = labels[0,0,0]
-     
+    #background_label = labels[0,0,0] 
     #Fill the air around the person
-    binary_image[background_label == labels] = 2
+    #binary_image[background_label == labels] = 2
+    for i in range(3):
+        background_label = labels[i,0,0]
+        binary_image[background_label == labels] = 2
+        background_label = labels[i,-1,0]
+        binary_image[background_label == labels] = 2
+        background_label = labels[i,0,-1]
+        binary_image[background_label == labels] = 2
+        background_label = labels[i,-1,-1]
+        binary_image[background_label == labels] = 2
     
+    '''
+    # Keep the labels with 2 largest areas.
+    areas = [r.area for r in measure.regionprops(labels)]
+    areas.sort()
+    if len(areas) > 2:
+        for region in measure.regionprops(labels):
+            if region.area < areas[-2]:
+                for coordinates in region.coords:                
+                       binary_image[coordinates[0], coordinates[1]] = 2 #0 # label small area as background: 2
+    '''
     
     # Method of filling the lung structures (that is superior to something like 
     # morphological closing)
@@ -307,8 +336,10 @@ def segment_lung_mask(image, fill_lung_structures=True):
     binary_image -= 1 #Make the image actual binary
     binary_image = 1-binary_image # Invert it, lungs are now 1
 
-    eroded_binary_image = morphology.binary_erosion(binary_image) 
-    dilation_binary_image = morphology.binary_dilation(eroded_binary_image) 
+    eroded_binary_image = morphology.binary_erosion(binary_image, np.ones([3,4,4])) 
+    dilation_binary_image = morphology.binary_dilation(eroded_binary_image, np.ones([3,10,10])) 
+    #dilation_binary_image = morphology.binary_opening(binary_image)
+    binary_image = dilation_binary_image
         
     '''
     #TODO: This part of code causes problem 
@@ -322,7 +353,7 @@ def segment_lung_mask(image, fill_lung_structures=True):
         binary_image[labels != l_max] = 0
     '''
 
-    return dilation_binary_image # binary_image
+    return binary_image # dilation_binary_image 
 
 
 def get_segment_lung_mask(path, fill_lung_structures=True):
@@ -340,6 +371,10 @@ def get_segment_lung_mask(path, fill_lung_structures=True):
         imgs = np.load(img_file)
         print("on image", img_file)
         
+        #height, width = imgs.shape[1], imgs.shape[2]
+        #segmented_lungs_fill = np.ndarray([3,height,width],dtype=np.int8)
+        #for i in range(3):
+        #    segmented_lungs_fill[i] = segment_lung_mask(imgs[i], fill_lung_structures)
         segmented_lungs_fill = segment_lung_mask(imgs, fill_lung_structures)
         
         np.save(img_file.replace("images","lungmask"), segmented_lungs_fill)
