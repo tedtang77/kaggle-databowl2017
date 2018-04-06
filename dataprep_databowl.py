@@ -5,6 +5,9 @@ import dicom
 import scipy.ndimage
 import matplotlib.pyplot as plt
 
+from glob import glob
+from tqdm import tqdm
+
 from skimage import measure, morphology
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -118,7 +121,8 @@ def plot_3d(image, threshold=-300):
     p = image.transpose(2,1,0)
     
     #verts, faces = measure.marching_cubes(p, threshold)
-    verts, faces, _, _ = measure.marching_cubes(p, level=threshold)
+    #verts, faces, _, _ = measure.marching_cubes(p, level=threshold)
+    verts, faces, _, _ = measure.marching_cubes_lewiner(p, threshold)
 
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')

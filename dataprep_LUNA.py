@@ -60,11 +60,11 @@ def get_images_and_masks(fcount, img_file, mini_df, path, resampling=True):
             #imgs[i] = matrix2uint16(img_array[i_z])
             imgs[i] = img_array[i_z]
 
-        np.save(os.path.join(path,"images_%04d_%04d.npy" % (fcount, node_idx)),imgs)
+        
         np.save(os.path.join(path,"masks_%04d_%04d.npy" % (fcount, node_idx)),masks)
         np.save(os.path.join(path,"spacing_%04d_%04d.npy" % (fcount, node_idx)),spacing)
     
-    
+'''    
 def get_images_and_masks_resample(fcount, img_file, mini_df, path): 
     # load the data once
     itk_img = sitk.ReadImage(img_file) 
@@ -99,7 +99,7 @@ def get_images_and_masks_resample(fcount, img_file, mini_df, path):
         np.save(os.path.join(path,"images_resampled_%04d_%04d.npy" % (fcount, node_idx)), imgs_resampled)
         np.save(os.path.join(path,"masks_resampled_%04d_%04d.npy" % (fcount, node_idx)), masks_resampled)
         np.save(os.path.join(path,"newspacing_%04d_%04d.npy" % (fcount, node_idx)), new_spacing)
-
+'''
 
 def make_mask(center, diam, z, width, height, spacing, origin):
     '''
@@ -163,7 +163,7 @@ def resample(image, spacing, new_spacing=[1,1,1]):
     real_resize_factor = new_shape / image.shape
     new_spacing = spacing / real_resize_factor
     
-    image = scipy.ndimage.interpolation.zoom(image, real_resize_factor, mode='nearest')
+    image = scipy.ndimage.interpolation.zoom(image, real_resize_factor, mode='constant')#, mode='nearest')
     
     return image, new_spacing
 
