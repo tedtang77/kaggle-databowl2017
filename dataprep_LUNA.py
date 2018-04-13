@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, math
 import SimpleITK as sitk
 import numpy as np
 import csv
